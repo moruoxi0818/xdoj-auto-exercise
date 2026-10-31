@@ -197,18 +197,23 @@ def _pair_inline_block(block):
 
 
 def _segments(t):
-    """按「输入样例/输出样例」这类标题切段，丢掉没有内容的空标题"""
+    """按「输入样例/输出样例」这类标题切段，丢掉没有内容的空标题
+
+    返回 (kind, body, idx)：idx 是标题里的序号（输入示例1 → 1），没有序号则为 None。
+    序号是判断「哪个输入配哪个输出」最可靠的依据。
+    """
     marks = []
     for m in _SEC_RE.finditer(t):
         kind = "输入" if "输入" in m.group(0) else "输出"
-        marks.append((m.start(), m.end(), kind))
+        num = re.search(r"\d{1,2}", m.group(0))
+        marks.append((m.start(), m.end(), kind, int(num.group(0)) if num else None))
     segs = []
-    for i, (s, e, kind) in enumerate(marks):
+    for i, (s, e, kind, idx) in enumerate(marks):
         end = marks[i + 1][0] if i + 1 < len(marks) else len(t)
         body = t[e:end]
         # 「输出样例」后面直接跟「样例1 输出：」时，这一层标题本身没有内容，跳过
         if body.strip():
-            segs.append((kind, body))
+            segs.append((kind, body, idx))
     return segs
 
 
@@ -225,10 +230,40 @@ def _parse_sections(t):
     segs = _segments(t)
     if not segs:
         return []
-    pairs = _pair_sequential(segs)
-    if not pairs:
-        pairs = _pair_batched(segs)
-    return pairs
+    # 按可靠性从高到低尝试：有序号就按序号配；没序号但输入输出数量相等，
+    # 就整批对整批配；最后才退回「输入后面紧跟输出」的顺序配对。
+    # 顺序配对放在最后，是因为它最容易把「输入示例3」和「输出示例1」凑成一对，
+    # 造成期望值张冠李戴（正确代码被判样例不符）。
+    for fn in (_pair_by_index, _pair_batched, _pair_sequential):
+        pairs = fn(segs)
+        if pairs and _consistent(pairs):
+            return pairs
+    return []
+
+
+def _pair_by_index(segs):
+    """按标题里的序号配对：输入示例1 ↔ 输出示例1"""
+    ins, outs = {}, {}
+    for kind, body, idx in segs:
+        if idx is None:
+            return []
+        parts = _parts(body)
+        if len(parts) != 1:
+            return []          # 一段里套了多组，序号不再一一对应，交给其它规则
+        (ins if kind == "输入" else outs)[idx] = parts[0]
+    if ins and set(ins) == set(outs):
+        return [(ins[k], outs[k]) for k in sorted(ins)]
+    return []
+
+
+def _consistent(pairs):
+    """配对结果自检：同一个输入不应配上两个不同的输出"""
+    seen = {}
+    for a, b in pairs:
+        if a in seen and seen[a] != b:
+            return False
+        seen[a] = b
+    return True
 
 
 def _pair_sequential(segs):
@@ -236,7 +271,7 @@ def _pair_sequential(segs):
     pairs = []
     i = 0
     while i < len(segs):
-        kind, body = segs[i]
+        kind, body = segs[i][0], segs[i][1]
         if kind != "输入":
             i += 1
             continue
@@ -259,7 +294,8 @@ def _pair_sequential(segs):
 def _pair_batched(segs):
     """先列全部输入、再列全部输出的排版，按顺序一一配对"""
     ins, outs = [], []
-    for kind, body in segs:
+    for seg in segs:
+        kind, body = seg[0], seg[1]
         (ins if kind == "输入" else outs).extend(_parts(body))
     if ins and len(ins) == len(outs):
         return list(zip(ins, outs))

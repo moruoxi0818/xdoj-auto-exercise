@@ -247,18 +247,22 @@ def main():
 
     # 浏览器启动器会立刻退出、把窗口交给主进程，所以改用页面心跳判断窗口是否还开着
     GRACE = 180      # 首次加载宽限
-    TIMEOUT = 100    # 无心跳多久判定窗口已关闭
+    TIMEOUT = 180    # 无心跳多久判定窗口已关闭
     t0 = time.time()
     try:
         while True:
             time.sleep(5)
             idle = time.time() - server.LAST_SEEN["t"]
             age = time.time() - t0
-            if age > GRACE and idle > TIMEOUT:
-                log(f"页面已 {idle:.0f}s 无心跳，关闭服务")
-                break
             if age > 3600 * 8:
                 log("运行超过 8 小时，自动退出")
+                break
+            # 正在刷题时不做心跳判定：页面最小化、系统休眠都会让心跳停掉，
+            # 这时候杀服务等于把跑到一半的批量任务腰斩。
+            if getattr(server.BUS, "running", False):
+                continue
+            if age > GRACE and idle > TIMEOUT:
+                log(f"页面已 {idle:.0f}s 无心跳，关闭服务")
                 break
     except KeyboardInterrupt:
         pass

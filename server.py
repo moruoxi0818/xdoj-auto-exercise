@@ -83,8 +83,9 @@ class RunReq(BaseModel):
     dry: bool = False
     delay: int = 5
     wait: int = 10
-    poll: int = 15
+    poll: int = 25
     skip_ac: bool = True
+    strict: bool = True      # 样例不符就不提交
     user: str | None = None
     pwd: str | None = None
 
@@ -97,7 +98,7 @@ def _worker(req: RunReq):
     try:
         eng.run(req.contest, req.pids, retry=req.retry, dry=req.dry, delay=req.delay,
                 wait=req.wait, poll=req.poll, user=req.user, pwd=req.pwd,
-                skip_ac=req.skip_ac)
+                skip_ac=req.skip_ac, strict=req.strict)
     except Exception as e:
         BUS.publish({"type": "log", "msg": f"任务异常：{e}", "level": "err"})
         BUS.publish({"type": "done", "total": 0, "ac": 0, "results": [], "error": str(e)})

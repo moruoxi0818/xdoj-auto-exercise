@@ -67,7 +67,9 @@ SYSTEM_PROMPT = """你是竞赛编程解题器。根据题目描述写出能通�
    样例里的空格数量、空行、缩进可能不规范，绝对不要照抄。题目说「数据之间用一个空格分隔」
    就输出一个空格，说「每行一个」就每行一个。
 6. 边界情况要考虑：0、负数、空输入、多组数据（题目若说明多组才用循环）。
-7. 只输出一个 ```cpp 代码块，代码块外不要写任何解释。
+7. 代码要紧凑：**不要写任何注释**，不要空行堆砌，不要打印调试信息。注释和冗余代码只会
+   让输出变长，一旦超出长度上限就会写不完整。
+8. 只输出一个 ```cpp 代码块，代码块外不要写任何解释。
 
 读入的健壮性（必须遵守）：
 - 绝不允许出现可能死循环的读入。用 while(scanf(...)==1)、while(cin>>x) 或 while((c=cin.get())!=EOF) 这类形式。
@@ -100,17 +102,24 @@ class Truncated(RuntimeError):
     pass
 
 
+class AuthError(RuntimeError):
+    """Key 无效 / 额度用尽 —— 这类错误重试和换模型都没用，必须停下来告诉用户"""
+
+
 def _cap_from_error(text):
     m = re.search(r"\[1,\s*(\d+)\]", text or "")
     return int(m.group(1)) if m else None
 
 
+HARD_CAP = 8192          # 输出被截断时，max_tokens 最多提升到这个值
+
+
 def solve(statement="", images=None, extra="", cfg=None, model=None,
-          max_tokens=None, retries=3, timeout=240):
+          max_tokens=None, retries=3, timeout=240, temperature=0.0):
     cfg = cfg or load_env()
     key = cfg.get("AI_API_KEY")
     if not key:
-        raise RuntimeError("缺少 AI_API_KEY")
+        raise AuthError("缺少 AI_API_KEY，请先在设置里填写")
 
     base = cfg.get("AI_BASE_URL", "https://open.bigmodel.cn/api/paas/v4").rstrip("/")
     images = images or []
@@ -130,19 +139,25 @@ def solve(statement="", images=None, extra="", cfg=None, model=None,
         "model": model,
         "messages": [{"role": "system", "content": SYSTEM_PROMPT},
                      {"role": "user", "content": content}],
-        "temperature": 0.0,
+        "temperature": float(temperature),
         "max_tokens": max_tokens,
     }
     headers = {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
 
     last = None
+    bumped = False
     for i in range(retries):
         try:
             r = requests.post(url, headers=headers, json=payload, timeout=timeout)
+            if r.status_code in (401, 403):
+                # 重试和换模型都救不了，直接把错误抛出去让上层中止整批
+                raise AuthError("HTTP %d 身份验证失败：Key 无效、已过期或额度用尽"
+                                % r.status_code)
             if r.status_code == 400:
                 cap = _cap_from_error(r.text)
                 if cap and cap < payload["max_tokens"]:
                     payload["max_tokens"] = cap
+                    last = f"平台把 max_tokens 限制为 {cap}"
                     print(f"    max_tokens 下调为 {cap}")
                     continue
                 last = "HTTP 400: " + r.text[:250]
@@ -151,9 +166,15 @@ def solve(statement="", images=None, extra="", cfg=None, model=None,
             else:
                 ch = r.json()["choices"][0]
                 if ch.get("finish_reason") == "length":
-                    raise Truncated(f"{model} 输出被截断")
+                    if not bumped and payload["max_tokens"] < HARD_CAP:
+                        # 先试着把上限翻倍重发，不要立刻换模型（换过去往往上限更低）
+                        bumped = True
+                        payload["max_tokens"] = min(payload["max_tokens"] * 2, HARD_CAP)
+                        print(f"    输出被截断，max_tokens 提升为 {payload['max_tokens']}")
+                        continue
+                    raise Truncated(f"{model} 输出被截断（max_tokens={payload['max_tokens']}）")
                 return extract_code(ch["message"]["content"])
-        except Truncated:
+        except (AuthError, Truncated):
             raise
         except Exception as e:
             last = repr(e)
@@ -161,7 +182,7 @@ def solve(statement="", images=None, extra="", cfg=None, model=None,
     raise RuntimeError("调用模型失败: " + str(last))
 
 
-def solve_with_fallback(statement="", images=None, extra="", cfg=None):
+def solve_with_fallback(statement="", images=None, extra="", cfg=None, temperature=0.0):
     cfg = cfg or load_env()
     if images:
         chain = [cfg.get("AI_VISION_MODEL") or "glm-4v-flash", "glm-4v-flash"]
@@ -177,7 +198,10 @@ def solve_with_fallback(statement="", images=None, extra="", cfg=None):
         tried.append(m)
         try:
             return solve(statement, images, extra, cfg, model=m,
-                         max_tokens=caps.get(m, int(cfg.get("AI_MAX_TOKENS") or 4096)))
+                         max_tokens=caps.get(m, int(cfg.get("AI_MAX_TOKENS") or 4096)),
+                         temperature=temperature)
+        except AuthError:
+            raise                      # Key 的问题换模型也没用，直接上抛
         except Exception as e:
             last = e
             print(f"    模型 {m} 失败：{e}")

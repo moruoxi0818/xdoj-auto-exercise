@@ -229,6 +229,7 @@ details.adv[open] summary::before{content:"▾ "}
       <button class="danger" id="btnStop" disabled>停止</button>
       <button class="ghost" id="btnList">载入题目列表</button>
       <label class="switch"><input type="checkbox" id="skipAc" checked>跳过已通过的题</label>
+      <label class="switch"><input type="checkbox" id="strict" checked>样例不符就不提交</label>
       <label class="switch"><input type="checkbox" id="dry">只生成不提交</label>
     </div>
 
@@ -358,8 +359,9 @@ function clsOf(st){
   if (OK_WORDS.includes(st)) return {b:"b-ok", run:false};
   if (RUN_WORDS.includes(st)) return {b:"b-run", run:true};
   if (!st || st === "跳过") return {b:"b-idle", run:false};
+  if (st === "跳过" || st === "排队超时") return {b:"b-warn", run:false};
   if (st === "样例不符" || st === "编译失败" || st === "提交被拒") return {b:"b-warn", run:false};
-  if (["结果错误","答案错误","编译错误","运行错误","格式错误","运行超时","无判定","模型失败","出错"].includes(st))
+  if (["结果错误","答案错误","编译错误","运行错误","格式错误","运行超时","无判定","模型失败","出错","Key 失效","题面失败"].includes(st))
     return {b:"b-bad", run:false};
   return {b:"b-warn", run:false};
 }
@@ -399,6 +401,7 @@ function render(pid){
   badge.innerHTML = (run ? '<span class="spin"></span>' : "") + esc(s.status || "等待");
 
   const meta = [];
+  if (s.samples !== undefined) meta.push(s.samples ? `样例 ${s.samples} 组` : `无样例（不做自检）`);
   if (s.attempt) meta.push(`第 ${s.attempt} 次尝试`);
   if (s.verdict) meta.push(`判定：${esc(s.verdict)}`);
   if (s.sub) meta.push(`提交号 ${esc(s.sub)}`);
@@ -474,7 +477,8 @@ function connect(){
         });
         stats();
       }
-      if (!ev.error) toast(`完成：${ev.ac}/${ev.total} 通过`);
+      if (!ev.error) toast(`完成：${ev.ac}/${ev.total} 通过`
+        + (ev.pending ? `，${ev.pending} 题未执行` : ""));
       else toast("任务失败：" + ev.error);
       return;
     }
@@ -547,6 +551,7 @@ async function run(){
     retry: +$("#retry").value || 0,
     delay: +$("#delay").value || 0,
     skip_ac: $("#skipAc").checked,
+    strict: $("#strict").checked,
     dry: $("#dry").checked
   };
   try{
