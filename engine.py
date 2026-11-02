@@ -20,37 +20,31 @@ from oj.pdftext import parse_samples, pdf_to_text
 _NO_WIN = 0x08000000 if os.name == "nt" else 0   # CREATE_NO_WINDOW
 
 
-def _find_gxx():
-    """按 PATH -> 环境变量 -> 常见安装目录 -> 浅层扫描 的顺序找 g++"""
-    p = shutil.which("g++") or shutil.which("g++.exe")
+def _find_tool(name):
+    """按 PATH -> 环境变量 -> 常见安装目录 -> 浅层扫描 的顺序找编译器"""
+    p = shutil.which(name) or shutil.which(name + ".exe")
     if p:
         return p
-    for env in ("CXX", "GXX"):
+    for env in ("CXX", "CC", "GXX"):
         v = os.environ.get(env)
-        if v and os.path.isfile(v):
+        if v and os.path.isfile(v) and os.path.basename(v).lower().startswith(name):
             return v
+    exe = name + ".exe"
     cands = [
-        r"C:\mingw64\bin\g++.exe",
-        r"C:\mingw32\bin\g++.exe",
-        r"C:\MinGW\bin\g++.exe",
-        r"C:\msys64\mingw64\bin\g++.exe",
-        r"C:\msys64\mingw32\bin\g++.exe",
-        r"C:\TDM-GCC-64\bin\g++.exe",
-        r"C:\Program Files\mingw64\bin\g++.exe",
-        r"C:\Program Files (x86)\mingw64\bin\g++.exe",
-        r"C:\w64devkit\bin\g++.exe",
-        r"D:\mingw64\bin\g++.exe",
-        r"D:\MinGW\bin\g++.exe",
-        r"E:\mingw64\bin\g++.exe",
-        r"E:\vscode\mingw64\bin\g++.exe",
-        r"E:\vscode\mingw32\bin\g++.exe",
+        r"C:\mingw64\bin", r"C:\mingw32\bin", r"C:\MinGW\bin",
+        r"C:\msys64\mingw64\bin", r"C:\msys64\mingw32\bin",
+        r"C:\TDM-GCC-64\bin", r"C:\Program Files\mingw64\bin",
+        r"C:\Program Files (x86)\mingw64\bin", r"C:\w64devkit\bin",
+        r"D:\mingw64\bin", r"D:\MinGW\bin", r"E:\mingw64\bin",
+        r"E:\vscode\mingw64\bin", r"E:\vscode\mingw32\bin",
     ]
     for c in cands:
-        if os.path.isfile(c):
-            return c
+        f = os.path.join(c, exe)
+        if os.path.isfile(f):
+            return f
     # 浅层扫描：找不到就交给用户装
-    pats = ("*/mingw*/bin/g++.exe", "*/MinGW*/bin/g++.exe", "*/w64devkit/bin/g++.exe",
-            "*/bin/g++.exe", "*/*/bin/g++.exe", "*/Dev-Cpp/MinGW*/bin/g++.exe")
+    pats = ("*/mingw*/bin/" + exe, "*/MinGW*/bin/" + exe, "*/w64devkit/bin/" + exe,
+            "*/bin/" + exe, "*/*/bin/" + exe, "*/Dev-Cpp/MinGW*/bin/" + exe)
     roots = [os.path.expanduser(r"~\AppData\Local\Programs"),
              r"C:\Program Files", r"C:\Program Files (x86)", r"C:\msys64",
              "C:\\", "D:\\", "E:\\"]
@@ -68,7 +62,13 @@ def _find_gxx():
     return ""
 
 
+def _find_gxx():
+    return _find_tool("g++")
+
+
 GXX = _find_gxx()
+GCC = _find_tool("gcc")
+
 
 try:
     import paths
@@ -90,21 +90,46 @@ _LOG_LOCK = threading.Lock()
 
 PENDING_WORDS = ("尚未评测", "等待评测", "正在评测", "排队", "正在编译", "正在运行", "等待")
 
+# 是否把题面页面渲染成图片一起交给模型：公式（分式/上下标/根号）只有看图才准。
+# 设环境变量 XDOJ_NO_VISION=1 可关掉，退回纯文字链路。
+VISION = os.environ.get("XDOJ_NO_VISION", "") not in ("1", "true", "yes")
+
+
 
 # ---------------- 编译与样例 ----------------
 
 def compile_cpp(path):
-    if not GXX:
-        return None, ("本机没有找到 g++ 编译器。\n"
-                      "请安装 MinGW-w64（或 w64devkit），并把它的 bin 目录加入系统 PATH，"
-                      "然后重新启动本程序。")
+    """编译源文件：.c 用 gcc（C11），其余用 g++（C++17）
+
+    题目要求用 C 语言，所以主力编译器是 gcc；没有 gcc 时退回 g++ 并用 -x c 强制按 C 编译。
+    gcc 编译失败但 g++ 能过的情况不再自动放行 —— 评测机按 languageId=2 编译，
+    能过本地 gcc 才说明语法真的没问题。
+    """
     exe = os.path.splitext(path)[0] + ".exe"
-    r = subprocess.run([GXX, "-std=c++17", "-O2", "-Wall", "-o", exe, path],
-                       capture_output=True, text=True, encoding="utf-8", errors="replace",
-                       creationflags=_NO_WIN)
+    is_c = path.lower().endswith(".c")
+    if is_c:
+        if GCC:
+            cmd = [GCC, "-std=c11", "-O2", "-Wall", "-o", exe, path, "-lm"]
+        elif GXX:
+            cmd = [GXX, "-x", "c", "-std=c11", "-O2", "-Wall", "-o", exe, path, "-lm"]
+        else:
+            return None, _no_compiler_msg()
+    else:
+        if not GXX:
+            return None, _no_compiler_msg()
+        cmd = [GXX, "-std=c++17", "-O2", "-Wall", "-o", exe, path]
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", creationflags=_NO_WIN)
     if r.returncode != 0:
         return None, (r.stderr or r.stdout)[:1500]
     return exe, ""
+
+
+def _no_compiler_msg():
+    return ("本机没有找到 C 编译器。\n"
+            "请安装 MinGW-w64（或 w64devkit），并把它的 bin 目录加入系统 PATH，"
+            "然后重新启动本程序。")
+
 
 
 def norm(s):
@@ -251,6 +276,32 @@ def check_samples(exe, samples):
 
 # ---------------- 引擎 ----------------
 
+_STOP_FORMULA_HEAD = re.compile(r"^(输入|输出)(样例|示例|说明|格式|描述|要求)")
+
+
+def _formula_excerpt(text, limit=6):
+    """从题面里挑出含公式的行，供重做时逐项核对
+
+    PDF 里的公式经常被拆行，行首行尾都是碎片，所以这里只挑「含运算符或等号」的行，
+    把它们原样交给模型，比让它从上百行题面里自己找要可靠。
+    """
+    picked = []
+    for ln in (text or "").splitlines():
+        s = ln.strip()
+        if not s or len(s) > 120:
+            continue
+        if not any(ch in s for ch in "=+-−×÷/^"):
+            continue
+        if not re.search(r"[A-Za-z\u4e00-\u9fff]", s):
+            continue
+        if _STOP_FORMULA_HEAD.match(s):
+            continue
+        picked.append(s)
+        if len(picked) >= limit:
+            break
+    return "\n".join(picked)
+
+
 class Engine:
     """一次运行 = 一个竞赛下的一批题目"""
 
@@ -337,10 +388,14 @@ class Engine:
             self.log(f"[{pid}] 题面已下载并缓存")
         else:
             self.log(f"[{pid}] 用本地缓存的题面")
-        text, imgs = pdf_to_text(pdf)
+        text, imgs = pdf_to_text(pdf, always_image=VISION, image_dir=SHOTS,
+                                 image_prefix=f"p{pid}_page", zoom=3.0)
         with open(os.path.join(SHOTS, f"p{pid}.txt"), "w", encoding="utf-8") as f:
             f.write(text or "(无文字层)")
+        if imgs:
+            self.log(f"[{pid}] 题面已渲染 {len(imgs)} 页图片（公式以图为准）")
         return text, imgs
+
 
     def solve_one(self, prob, cfg, retry=1, dry=False, wait=10, poll=25, gap=3,
                   strict=True):
@@ -362,7 +417,7 @@ class Engine:
                     "detail": str(e)}
         samples = parse_samples(text)
         self.log(f"[{pid}] 题面 {len(text)} 字，样例 {len(samples)} 组"
-                 + ("，扫描版转图片" if imgs else ""))
+                 + (f"，附页面图 {len(imgs)} 页" if imgs else ""))
         for i, (a, b) in enumerate(samples, 1):
             self.log(f"[{pid}]   样例{i}：{a} -> {b}".replace("\n", " / "))
 
@@ -404,11 +459,11 @@ class Engine:
 
             raw_len = len(code)
             code = strip_comments(code)
-            cpp = os.path.join(SRC, f"p{pid}.cpp")
+            cpp = os.path.join(SRC, f"p{pid}.c")
             if os.path.exists(cpp) and attempt > 1:
                 # 旧版本留档，方便对比「改了之后为什么反而错了」
                 try:
-                    shutil.copy2(cpp, os.path.join(SRC, f"p{pid}.a{attempt - 1}.cpp"))
+                    shutil.copy2(cpp, os.path.join(SRC, f"p{pid}.a{attempt - 1}.c"))
                 except Exception:
                     pass
             with open(cpp, "w", encoding="utf-8") as f:
@@ -446,6 +501,8 @@ class Engine:
 
             if dry:
                 self.log(f"[{pid}] 仅生成模式，不提交")
+                self.problem(pid, title=title, status="已生成", attempt=attempt,
+                             code=code, verdict="", samples=len(samples))
                 self._record(pid, title, attempt, samples, "已生成", kind, time.time() - t_start, msg)
                 return {"pid": pid, "title": title, "verdict": "已生成", "attempts": attempt,
                         "cpp": cpp}
@@ -511,15 +568,19 @@ class Engine:
                              time.time() - t_start, msg)
                 return {"pid": pid, "title": title, "verdict": "正确", "attempts": attempt,
                         "sub": got["sub_id"], "cpp": cpp}
+            formula = _formula_excerpt(text)
             feedback = (f"上一版提交判定为「{v}」，逻辑或输出格式有错。"
                         f"请重新审题，注意边界情况；输出格式严格按题目的文字要求"
-                        f"（分隔符、空格数量、每行几个数），不要照抄样例里可能不规范的空白。")
+                        f"（分隔符、空格数量、每行几个数），不要照抄样例里可能不规范的空白。"
+                        + (f"\n题面里的公式行如下（PDF 抽取可能把分数线、上标打散）：\n{formula}"
+                           "\n请把代码里的表达式与上面每一项逐个对齐，特别检查分母、平方根、"
+                           "平方项和常数项有没有漏写。" if formula else ""))
 
         self._record(pid, title, retry + 1, samples, (last or {}).get("verdict") or "未通过",
                      kind, time.time() - t_start, "")
         return {"pid": pid, "title": title,
                 "verdict": (last or {}).get("verdict") or "未通过",
-                "attempts": retry + 1, "cpp": os.path.join(SRC, f"p{pid}.cpp")}
+                "attempts": retry + 1, "cpp": os.path.join(SRC, f"p{pid}.c")}
 
     # ---------- 批量 ----------
     def run(self, contest, pids, retry=1, dry=False, delay=5, wait=10, poll=25,

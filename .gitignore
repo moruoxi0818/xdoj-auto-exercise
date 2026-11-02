@@ -8,3 +8,13 @@ src/
 port.txt
 __pycache__/
 *.pyc
+
+# 打包中间产物（PyInstaller）
+build/
+dist/
+*.spec
+
+# 分发包走 GitHub Releases，不进版本库
+*.exe
+*.zip
+install.log

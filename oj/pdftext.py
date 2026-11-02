@@ -12,8 +12,13 @@ import pymupdf
 _INHIBIT = getattr(pymupdf, "TEXT_INHIBIT_SPACES", 0)
 
 
-def pdf_to_text(pdf_bytes, max_pages=6):
-    """返回 (text, images)；有文字层就只给 text，没有就渲染图片"""
+def pdf_to_text(pdf_bytes, max_pages=6, always_image=False, image_dir=None,
+                image_prefix="pdf", zoom=3.0):
+    """返回 (text, images)；有文字层就只给 text，没有就渲染图片
+
+    always_image=True 时无论有没有文字层都渲染页面图：题面里的公式（分式、上下标、
+    根号）只有看图才准，文字稿只能当辅助。
+    """
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     parts = []
     for i, page in enumerate(doc):
@@ -28,26 +33,53 @@ def pdf_to_text(pdf_bytes, max_pages=6):
     text = "\n".join(parts)
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    text = repair_fractions(text)
 
     if len(text) >= 60:
+        imgs = []
+        if always_image:
+            imgs = render_pages(doc, image_dir, image_prefix, max_pages=2, zoom=zoom,
+                                fallback_bytes=pdf_bytes)
         doc.close()
-        return text, []
+        return text, imgs
 
     # 扫描版：渲染成图片
-    imgs = []
-    tmpdir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                          "data", "shots")
-    os.makedirs(tmpdir, exist_ok=True)
-    stamp = abs(hash(pdf_bytes)) % 10 ** 8
+    imgs = render_pages(doc, image_dir, image_prefix or "pdf", max_pages=max_pages,
+                        zoom=2.0, fallback_bytes=pdf_bytes)
+    doc.close()
+    return "", imgs
+
+
+def render_pages(doc, out_dir=None, prefix="page", max_pages=2, zoom=3.0,
+                 fallback_bytes=None):
+    """把 PDF 页面渲染成 PNG，返回图片路径列表
+
+    zoom=3 约等于 216 dpi：题面里 9pt 的公式小字在这个倍率下笔画不粘连，
+    再高只会白白增加传输体积。
+    """
+    if out_dir is None:
+        out_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "data", "shots")
+    os.makedirs(out_dir, exist_ok=True)
+    paths = []
     for i, page in enumerate(doc):
         if i >= max_pages:
             break
-        pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2))
-        p = os.path.join(tmpdir, f"pdf_{stamp}_{i}.png")
-        pix.save(p)
-        imgs.append(p)
-    doc.close()
-    return "", imgs
+        try:
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+        except Exception:
+            continue
+        p = os.path.join(out_dir, f"{prefix}_{i}.png")
+        try:
+            pix.save(p)
+            paths.append(p)
+        except Exception:
+            continue
+    if not paths and fallback_bytes:
+        # doc 已经关了/取不到页面时的兜底，交给上层判断
+        pass
+    return paths
+
 
 
 def _is_cjk(ch):
@@ -139,6 +171,56 @@ _IDX_RE = re.compile(r"(?:样例|示例)[ \t]*(\d{1,2})[ \t]*(输入|输出)[ \t
 
 # 只写序号的块标题：样例1： / 示例 2 :
 _BLK_RE = re.compile(r"(?:样例|示例)[ \t]*(\d{1,2})?[ \t]*[:：]")
+
+
+# 分式修复用到的两个判定：
+#   1) 行尾是二元运算符（说明这一项还没写完，被排版硬切成两行）。
+#      只认 + - × ÷ * / 这几个：等号、逗号、左括号结尾的多半是整行公式，
+#      后面跟的短碎片往往是上标（x 的 1/2 次方那种），拼成分式反而写错。
+#   2) 短到只能是分子/分母的碎片（1～4 个字符、不含空白的纯算式字符）
+_TAIL_OP = "+-−–×÷*/"
+_MATH_FRAG = re.compile(r"^[0-9A-Za-z()\[\]{}+\-−×÷*/^.]{1,4}$")
+
+
+def _is_tail_op(s):
+    s = s.rstrip()
+    return bool(s) and s[-1] in _TAIL_OP
+
+
+def _is_math_frag(s):
+    s = s.strip()
+    if not s or any(ch.isspace() for ch in s):
+        return False
+    return bool(_MATH_FRAG.match(s))
+
+
+def repair_fractions(text):
+    """把被 PDF 打散的分式拼回 a/b：`+ 2x +` / `1` / `x` -> `+ 2x + (1)/(x)`
+
+    公式里的分数线是一条矢量线段而不是字符，PyMuPDF 拿不到任何“这是分式”的信息，
+    只能按坐标顺序把分子、分母当两行普通文字吐出来。于是题面里的
+    (x+1)²+2x+1/x 变成三行，模型读到的公式少了 /x 这一项，写出来的代码自然也少一项。
+
+    这里只处理最明确的形态：上一行以运算符收尾，紧跟两行都是无空白的短碎片。
+    并且只在第一个样例标题之前动手 —— 样例区原样保留，避免把输入数据当公式拼。
+    """
+    if not text:
+        return text
+    m = _SEC_RE.search(text) or _SAMPLE_HEAD.search(text)
+    head, tail = (text[:m.start()], text[m.start():]) if m else (text, "")
+    lines = head.split("\n")
+    out = []
+    i = 0
+    while i < len(lines):
+        if (i + 2 < len(lines) and _is_tail_op(lines[i])
+                and _is_math_frag(lines[i + 1]) and _is_math_frag(lines[i + 2])):
+            num, den = lines[i + 1].strip(), lines[i + 2].strip()
+            out.append(f"{lines[i].rstrip()} ({num})/({den})")
+            i += 3
+            continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out) + tail
 
 
 def parse_samples(text):
