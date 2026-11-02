@@ -198,7 +198,7 @@ def get_config():
     key = cfg.get("AI_API_KEY") or ""
     try:
         import engine as _eng
-        cxx = _eng.GXX
+        cxx = _eng.GCC or _eng.GXX      # 现在主用 C 编译器，优先报 gcc
     except Exception:
         cxx = ""
     return {

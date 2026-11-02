@@ -164,12 +164,56 @@ def wait_ready(port, timeout=40):
 
 # ---------------- 主流程 ----------------
 
+def _selftest(pdf_path):
+    """打包后的冒烟自检：抽题面 + 渲染页面图 + 找编译器，全部写进日志
+
+    打包最容易坏在两处：pymupdf 的资源文件没进去、编译器探测写死了开发路径。
+    这个入口就是拿来确认这两点的，用法：XDOJ刷题.exe --selftest 某个题面.pdf
+    """
+    import paths
+    paths.ensure_env()
+    ok = True
+    try:
+        import pymupdf
+        log("selftest: pymupdf %s" % getattr(pymupdf, "__version__", "?"))
+    except Exception as e:
+        log("selftest: pymupdf 导入失败 %r" % (e,))
+        ok = False
+    try:
+        from oj.pdftext import parse_samples, pdf_to_text
+        with open(pdf_path, "rb") as f:
+            data = f.read()
+        text, imgs = pdf_to_text(data, always_image=True,
+                                 image_dir=paths.SHOTS_DIR, image_prefix="selftest")
+        log("selftest: 文字 %d 字，样例 %d 组，图片 %d 张"
+            % (len(text), len(parse_samples(text)), len(imgs)))
+        for p in imgs:
+            log("selftest: 图片 %s %d 字节" % (os.path.basename(p), os.path.getsize(p)))
+    except Exception as e:
+        import traceback
+        log("selftest: 题面处理失败\n" + traceback.format_exc())
+        ok = False
+    try:
+        import engine
+        log("selftest: gcc=%s g++=%s" % (engine.GCC or "(未找到)", engine.GXX or "(未找到)"))
+    except Exception as e:
+        log("selftest: engine 导入失败 %r" % (e,))
+        ok = False
+    log("selftest: %s" % ("通过" if ok else "失败"))
+    return 0 if ok else 1
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--serve-only", action="store_true", help="只起服务，不开窗口（调试用）")
     ap.add_argument("--port", type=int, default=0)
+    ap.add_argument("--selftest", metavar="PDF", default="",
+                    help="自检：对指定 PDF 抽题面并渲染页面图，结果写日志（打包后验证用）")
     args = ap.parse_args()
+
+    if args.selftest:
+        return _selftest(args.selftest)
 
     ok, other = acquire_lock()
     if not ok:
