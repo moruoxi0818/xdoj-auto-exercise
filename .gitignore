@@ -18,3 +18,8 @@ dist/
 *.exe
 *.zip
 install.log
+
+# 编辑器与本地工作区状态
+.workbuddy/
+.vscode/
+.idea/

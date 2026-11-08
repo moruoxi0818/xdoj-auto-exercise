@@ -147,6 +147,16 @@ _SEC_RE = re.compile(
 _SUB_RE = re.compile(
     r"(?:样例|示例)[ \t]*\d*[ \t]*(?:输入|输出)?[ \t]*[:：][ \t]*")
 
+# 有的题把子样例标题写成「单独一行、且不带冒号」（p616 车牌限行就是这样）：
+#   输入样例
+#   样例1
+#   137891 123 1
+#   样例 2
+#   0 265 5
+# 这时 _SUB_RE 一条都匹配不上，整段会被当成一组样例，三组输入被拼成一坨，
+# 喂给程序后自然是「样例1 输出不符」。所以必须按行认这种纯序号标题。
+_SUB_LINE_RE = re.compile(r"^[ \t]*(?:样例|示例)[ \t]*(\d{1,2})[ \t]*[:：]?[ \t]*$", re.M)
+
 # 「输入：」「输出：」这种最简写法（有些题根本不用"样例"二字）
 _INLINE_RE = re.compile(r"(输入|输出)[ \t]*[:：][ \t]*")
 
@@ -158,6 +168,10 @@ _STOP_ANY = re.compile(
     r"(用例规模|规模与约定|数据范围|评测用例|样例说明|样例解释|样例\s*\d*\s*说明)")
 
 _SAMPLE_HEAD = re.compile(r"^(?:样例|示例)[ \t]*\d*[ \t]*(输入|输出)?[ \t]*[:：]")
+
+# 不带冒号的纯序号标题（样例1 / 示例 2）：切分后残留在块首或块尾时也要当边界丢掉，
+# 否则「样例1」「样例 2」会被当成程序的输入数据
+_SAMPLE_HEAD_BARE = re.compile(r"^(?:样例|示例)[ \t]*\d{1,2}[ \t]*[:：]?$")
 
 # 不带冒号的段标题（输入样例 / 输出样例），出现在段中间说明这一段已经结束
 _BARE_HEAD = re.compile(r"^(?:输入|输出)[ \t]*(?:样例|示例)[ \t]*$")
@@ -230,6 +244,20 @@ def parse_samples(text):
     t = text.replace("\u3000", " ").replace("\xa0", " ")
     pairs = _parse_indexed(t) or _parse_sections(t) or _parse_numbered(t) or _parse_inline(t)
     return [(a, b) for a, b in pairs if a and b][:3]
+
+
+def sample_mark_count(text):
+    """题面里出现了几个「样例N」序号
+
+    只用于事后核对：解析出的组数明显少于题面标注的序号数，
+    说明切分规则没覆盖这种排版（p616 那样三组被并成一组），应当打警告而不是静默通过。
+    """
+    if not text:
+        return 0
+    t = text.replace("\u3000", " ").replace("\xa0", " ")
+    nums = {m.group(1) for m in _SUB_LINE_RE.finditer(t)}
+    nums |= {m.group(1) for m in _IDX_RE.finditer(t)}
+    return len(nums)
 
 
 def _parse_indexed(t):
@@ -384,15 +412,34 @@ def _pair_batched(segs):
     return []
 
 
+def _sub_hits(block):
+    """段内子样例标题的位置（起点, 终点）
+
+    两种写法都要认：带冒号的行内标题「样例1：」、独立成行的纯序号标题「样例 2」。
+    「样例1：」单独占一行时两边都会命中，按起点合并、保留覆盖更长的那个。
+    """
+    hits = [(m.start(), m.end()) for m in _SUB_RE.finditer(block)]
+    hits += [(m.start(), m.end()) for m in _SUB_LINE_RE.finditer(block)]
+    hits.sort(key=lambda x: (x[0], -x[1]))
+    out = []
+    for s, e in hits:
+        if out and s < out[-1][1]:
+            if e > out[-1][1]:
+                out[-1] = (out[-1][0], e)
+            continue
+        out.append((s, e))
+    return out
+
+
 def _split_sub(block):
-    """段内若还有「样例1：」这类子标题，按子标题切分成多组"""
-    hits = list(_SUB_RE.finditer(block))
+    """段内若还有「样例1：」「样例 2」这类子标题，按子标题切分成多组"""
+    hits = _sub_hits(block)
     if len(hits) < 2:
         return []
     out = []
-    for i, m in enumerate(hits):
-        end = hits[i + 1].start() if i + 1 < len(hits) else len(block)
-        c = _clean_block(block[m.end():end])
+    for i, (s, e) in enumerate(hits):
+        end = hits[i + 1][0] if i + 1 < len(hits) else len(block)
+        c = _clean_block(block[e:end])
         if c:
             out.append(c)
     return out
@@ -439,7 +486,8 @@ def _clean_block(s):
         if _ORDINAL.match(ln):
             continue          # 单独一行的序号（1：）不是样例内容
         if (_STOP_HEAD.match(ln) or _STOP_ANY.search(ln)
-                or _SAMPLE_HEAD.match(ln) or _BARE_HEAD.match(ln)):
+                or _SAMPLE_HEAD.match(ln) or _SAMPLE_HEAD_BARE.match(ln)
+                or _BARE_HEAD.match(ln)):
             break
         lines.append(ln)
         if len(lines) >= 12:

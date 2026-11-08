@@ -15,7 +15,7 @@ import time
 
 from ai.solver import AuthError, load_env, solve_with_fallback
 from oj.client import VERDICT_OK, OJ, OJError
-from oj.pdftext import parse_samples, pdf_to_text
+from oj.pdftext import parse_samples, pdf_to_text, sample_mark_count
 
 _NO_WIN = 0x08000000 if os.name == "nt" else 0   # CREATE_NO_WINDOW
 
@@ -416,8 +416,14 @@ class Engine:
             return {"pid": pid, "title": title, "verdict": "题面失败", "attempts": 0,
                     "detail": str(e)}
         samples = parse_samples(text)
+        marks = sample_mark_count(text)
         self.log(f"[{pid}] 题面 {len(text)} 字，样例 {len(samples)} 组"
                  + (f"，附页面图 {len(imgs)} 页" if imgs else ""))
+        if marks >= 2 and marks > len(samples):
+            # 题面标了 N 组、只解析出 M 组，多半是切分规则没覆盖这种排版，
+            # 此时样例会被拼成一组喂给程序，自检结果必然是假的（p616 就是这么挂的）
+            self.log(f"[{pid}] 注意：题面标注 {marks} 组样例，只解析出 {len(samples)} 组，"
+                     f"疑似被合并，自检结论仅供参考", "warn")
         for i, (a, b) in enumerate(samples, 1):
             self.log(f"[{pid}]   样例{i}：{a} -> {b}".replace("\n", " / "))
 
