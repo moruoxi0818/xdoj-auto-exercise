@@ -16,6 +16,9 @@ import requests
 
 BASE = "http://47.92.139.74/xdoj-ssm"
 
+# 单次刷题能拉到的题目上限（原为 200）。服务端若限制单页条数，会按 totalCount 自动续页。
+MAX_PROBLEMS = 1000
+
 VERDICT_OK = "正确"
 VERDICTS = ("正确", "结果错误", "答案错误", "编译错误", "运行错误", "格式错误",
             "运行超时", "内存超限", "输出超限", "部分正确", "系统错误", "预判错误")
@@ -24,6 +27,14 @@ PENDING = ("尚未评测", "等待评测", "正在评测", "排队", "正在编�
 
 class OJError(RuntimeError):
     pass
+
+
+def _as_int(v, default=0):
+    """服务端 totalCount 有时是字符串，统一转成整数"""
+    try:
+        return int(str(v).strip())
+    except (TypeError, ValueError):
+        return default
 
 
 class OJ:
@@ -74,26 +85,56 @@ class OJ:
         self.s.get(BASE + "/team/problems.do", timeout=self.timeout)
         return js
 
-    def problems(self, cid=None, rows=200, page=1):
-        cid = cid or self.contest
+    def _problems_page(self, cid, rows, page):
+        """取一页题目列表，原样返回服务端 JSON"""
         r = self.s.get(BASE + "/contest/problems.do", params={
             "contestId": str(cid), "userId": self.uid, "_search": "false",
             "nd": "1", "rows": str(rows), "page": str(page), "sidx": "", "sord": "asc",
         }, headers={"Referer": f"{BASE}/team/problems.do"}, timeout=self.timeout)
         try:
-            js = r.json()
+            return r.json()
         except Exception:
             raise OJError("题目列表非 JSON: " + r.text[:200])
-        out = []
-        for p in js.get("data") or []:
-            out.append({
-                "pid": p.get("id"),
-                "title": p.get("title") or "",
-                "category": p.get("categoryName") or "",
-                "tl": p.get("timeLimit"),
-                "ml": p.get("memoryLimit"),
-            })
-        return out
+
+    def problems(self, cid=None, rows=MAX_PROBLEMS, page=1):
+        """题目列表，默认可取到 1000 题
+
+        只发一次大 rows 请求，服务端多半会截断成单页上限；所以按 totalCount 续页，
+        直到拿满 rows 条或服务端不再返回新数据为止（用 pid 去重，防止分页参数被忽略时死循环）。
+        """
+        cid = cid or self.contest
+        limit = max(1, int(rows or MAX_PROBLEMS))
+        out, seen = [], set()
+        total = 0
+        cur = max(1, int(page or 1))
+        for _ in range(60):                       # 页数硬上限，兜底防死循环
+            if len(out) >= limit:
+                break
+            js = self._problems_page(cid, limit, cur)
+            total = _as_int(js.get("totalCount"), total)
+            data = js.get("data") or []
+            if not data:
+                break
+            added = 0
+            for p in data:
+                pid = p.get("id")
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                added += 1
+                out.append({
+                    "pid": pid,
+                    "title": p.get("title") or "",
+                    "category": p.get("categoryName") or "",
+                    "tl": p.get("timeLimit"),
+                    "ml": p.get("memoryLimit"),
+                })
+            if not added:                          # 服务端忽略 page，已经到底
+                break
+            if total and len(seen) >= total:
+                break
+            cur += 1
+        return out[:limit]
 
     # ---------------- 题面 ----------------
     def statement_pdf(self, pid):
@@ -171,9 +212,20 @@ class OJ:
                     if isinstance(x["sub_id"], int)], default=0)
 
     def solved_pids(self, cid=None):
-        """已经 AC 的题号集合"""
-        done = set()
-        for x in self.results(cid, rows=500):
-            if x["verdict"] == VERDICT_OK and x["pid"]:
-                done.add(x["pid"])
+        """已经 AC 的题号集合
+
+        提交记录按每页 200 条翻，最多看 1000 条：题量提到 1000 之后，只取第一页会漏掉
+        早期 AC 的题，导致重复提交。服务端若忽略 page 参数，第二轮就取不到新记录，直接收工。
+        """
+        done, seen = set(), set()
+        per = 200
+        for page in range(1, max(1, MAX_PROBLEMS // per) + 1):
+            batch = self.results(cid, rows=per, page=page)
+            fresh = [x for x in batch if x["sub_id"] not in seen]
+            if not fresh:
+                break
+            for x in fresh:
+                seen.add(x["sub_id"])
+                if x["verdict"] == VERDICT_OK and x["pid"]:
+                    done.add(x["pid"])
         return done

@@ -262,7 +262,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT") or 0) or pick_port()
     # 一键启动脚本靠这个文件拿到真实端口
     try:
-        with open(os.path.join(APP_DIR, "port.txt"), "w", encoding="utf-8") as f:
+        with open(os.path.join(APP_DIR, "port.txt"), "w", encoding="ascii") as f:
             f.write(str(port))
     except Exception:
         pass

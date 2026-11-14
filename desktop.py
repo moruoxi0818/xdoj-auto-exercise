@@ -15,6 +15,8 @@ import sys
 import threading
 import time
 
+import charset
+
 
 def _appdata():
     base = os.environ.get("APPDATA") or os.path.expanduser("~")
@@ -29,8 +31,7 @@ def _log_path():
 
 def log(msg):
     try:
-        with open(_log_path(), "a", encoding="utf-8") as f:
-            f.write(time.strftime("[%m-%d %H:%M:%S] ") + str(msg) + "\n")
+        charset.append_text(_log_path(), time.strftime("[%m-%d %H:%M:%S] ") + str(msg) + "\n")
     except Exception:
         pass
     try:
@@ -44,7 +45,8 @@ def _redirect_std_streams():
     if sys.stdout is not None and sys.stderr is not None:
         return
     try:
-        f = open(_log_path(), "a", encoding="utf-8", buffering=1)
+        f = open(_log_path(), "a", encoding=charset.detect(_log_path()),
+                 errors="replace", buffering=1)
     except Exception:
         return
     if sys.stdout is None:
@@ -79,7 +81,8 @@ def acquire_lock():
 def _alive(pid):
     try:
         out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-                             capture_output=True, text=True, timeout=8)
+                             capture_output=True, timeout=8,
+                             **charset.subprocess_kw())
         return str(pid) in (out.stdout or "")
     except Exception:
         return False

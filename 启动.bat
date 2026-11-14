@@ -1,16 +1,16 @@
 @echo off
-chcp 65001 >nul
+chcp 936 >nul
 setlocal enabledelayedexpansion
-title XDOJ è‡ªåŠ¨åˆ·é¢˜
+title XDOJ ×Ô¶¯Ë¢Ìâ
 cd /d "%~dp0"
 
 echo.
 echo   ==================================================
-echo      XDOJ è‡ªåŠ¨åˆ·é¢˜ - ä¸€é”®å¯åŠ¨
+echo      XDOJ ×Ô¶¯Ë¢Ìâ - Ò»¼üÆô¶¯
 echo   ==================================================
 echo.
 
-rem ---------------- 1. æŸ¥æ‰¾ Python ----------------
+rem ---------------- 1. ²éÕÒ Python ----------------
 set "PYCMD="
 py -3 -V >nul 2>nul
 if not errorlevel 1 set "PYCMD=py -3"
@@ -30,35 +30,35 @@ if not defined PYCMD (
 )
 
 if not defined PYCMD (
-    echo   [X] æ²¡æœ‰æ£€æµ‹åˆ° Python
+    echo   [X] Ã»ÓĞ¼ì²âµ½ Python
     echo.
-    echo       è¯·å…ˆå®‰è£… Python 3.9 æˆ–æ›´é«˜ç‰ˆæœ¬ï¼š
+    echo       ÇëÏÈ°²×° Python 3.9 »ò¸ü¸ß°æ±¾£º
     echo         https://www.python.org/downloads/
-    echo       å®‰è£…æ—¶è¯·åŠ¡å¿…å‹¾é€‰ "Add python.exe to PATH"ï¼Œ
-    echo       è£…å¥½åå†åŒå‡»æœ¬æ–‡ä»¶ã€‚
+    echo       °²×°Ê±ÇëÎñ±Ø¹´Ñ¡ "Add python.exe to PATH"£¬
+    echo       ×°ºÃºóÔÙË«»÷±¾ÎÄ¼ş¡£
     echo.
     start "" "https://www.python.org/downloads/"
     pause
     exit /b 1
 )
-echo   [OK] å·²æ‰¾åˆ° Python
+echo   [OK] ÒÑÕÒµ½ Python
 
-rem ---------------- 2. å‡†å¤‡è¿è¡Œç¯å¢ƒ ----------------
-rem å·²æœ‰ç¯å¢ƒæ˜¯å¦è¿˜èƒ½ç”¨ï¼ˆä»åˆ«çš„ç”µè„‘æ‹·è¿‡æ¥çš„ venv ä¼šå¤±æ•ˆï¼Œè¿™é‡Œè‡ªåŠ¨é‡å»ºï¼‰
+rem ---------------- 2. ×¼±¸ÔËĞĞ»·¾³ ----------------
+rem ÒÑÓĞ»·¾³ÊÇ·ñ»¹ÄÜÓÃ£¨´Ó±ğµÄµçÄÔ¿½¹ıÀ´µÄ venv »áÊ§Ğ§£¬ÕâÀï×Ô¶¯ÖØ½¨£©
 if exist ".venv\Scripts\python.exe" (
     ".venv\Scripts\python.exe" -c "import sys" >nul 2>nul
     if errorlevel 1 (
-        echo   æ—§çš„è¿è¡Œç¯å¢ƒä¸å¯ç”¨ï¼Œæ­£åœ¨é‡å»º...
+        echo   ¾ÉµÄÔËĞĞ»·¾³²»¿ÉÓÃ£¬ÕıÔÚÖØ½¨...
         rmdir /s /q ".venv"
     )
 )
 
 if exist ".venv\Scripts\python.exe" goto :CHECKDEP
 echo.
-echo   é¦–æ¬¡è¿è¡Œï¼Œæ­£åœ¨åˆ›å»ºè¿è¡Œç¯å¢ƒï¼ˆåªéœ€ä¸€æ¬¡ï¼‰...
+echo   Ê×´ÎÔËĞĞ£¬ÕıÔÚ´´½¨ÔËĞĞ»·¾³£¨Ö»ĞèÒ»´Î£©...
 %PYCMD% -m venv .venv
 if not exist ".venv\Scripts\python.exe" (
-    echo   [X] åˆ›å»ºè¿è¡Œç¯å¢ƒå¤±è´¥ï¼Œè¯·ç¡®è®¤ Python å®‰è£…å®Œæ•´ã€‚
+    echo   [X] ´´½¨ÔËĞĞ»·¾³Ê§°Ü£¬ÇëÈ·ÈÏ Python °²×°ÍêÕû¡£
     pause
     exit /b 1
 )
@@ -67,42 +67,42 @@ if not exist ".venv\Scripts\python.exe" (
 ".venv\Scripts\python.exe" -c "import fastapi,uvicorn,requests,fitz" >nul 2>nul
 if not errorlevel 1 goto :DEPSOK
 
-echo   æ­£åœ¨å®‰è£…ä¾èµ–ï¼Œç¬¬ä¸€æ¬¡ä¼šæ…¢ä¸€ç‚¹ï¼Œè¯·è€å¿ƒç­‰å¾…...
+echo   ÕıÔÚ°²×°ÒÀÀµ£¬µÚÒ»´Î»áÂıÒ»µã£¬ÇëÄÍĞÄµÈ´ı...
 ".venv\Scripts\python.exe" -m pip install --disable-pip-version-check -q --timeout 60 --retries 2 -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple >nul 2>nul
 ".venv\Scripts\python.exe" -c "import fastapi,uvicorn,requests,fitz" >nul 2>nul
 if not errorlevel 1 goto :DEPSOK
 
-echo   é•œåƒæºä¸é€šï¼Œæ­£åœ¨æ¢å®˜æ–¹æºé‡è¯•ï¼ˆå¯èƒ½æ¯”è¾ƒæ…¢ï¼‰...
+echo   ¾µÏñÔ´²»Í¨£¬ÕıÔÚ»»¹Ù·½Ô´ÖØÊÔ£¨¿ÉÄÜ±È½ÏÂı£©...
 ".venv\Scripts\python.exe" -m pip install --disable-pip-version-check --timeout 60 --retries 2 -r requirements.txt >install.log 2>&1
 ".venv\Scripts\python.exe" -c "import fastapi,uvicorn,requests,fitz" >nul 2>nul
 if not errorlevel 1 goto :DEPSOK2
 
 echo.
-echo   [X] ä¾èµ–å®‰è£…å¤±è´¥ï¼Œè¯·æ£€æŸ¥ç½‘ç»œåé‡æ–°åŒå‡»æœ¬æ–‡ä»¶ã€‚
-echo       è¯¦ç»†æ—¥å¿—ï¼š%CD%\install.log
+echo   [X] ÒÀÀµ°²×°Ê§°Ü£¬Çë¼ì²éÍøÂçºóÖØĞÂË«»÷±¾ÎÄ¼ş¡£
+echo       ÏêÏ¸ÈÕÖ¾£º%CD%\install.log
 pause
 exit /b 1
 
 :DEPSOK2
 if exist install.log del /q install.log >nul 2>nul
 :DEPSOK
-echo   [OK] è¿è¡Œç¯å¢ƒå°±ç»ª
+echo   [OK] ÔËĞĞ»·¾³¾ÍĞ÷
 
-rem ---------------- 3. æ£€æŸ¥ C++ ç¼–è¯‘å™¨ ----------------
+rem ---------------- 3. ¼ì²é C++ ±àÒëÆ÷ ----------------
 g++ --version >nul 2>nul
 if errorlevel 1 (
-    echo   [!] æ²¡æœ‰æ£€æµ‹åˆ° g++ ç¼–è¯‘å™¨
-    echo       ç¨‹åºä¼šå…ˆç”¨æœ¬åœ°ç¼–è¯‘å™¨éªŒè¯ç”Ÿæˆçš„ä»£ç ï¼Œç¼ºå°‘æ—¶ä¼šç¼–è¯‘å¤±è´¥ã€‚
-    echo       å»ºè®®å®‰è£… MinGW-w64 æˆ– w64devkitï¼Œå¹¶æŠŠå®ƒçš„ bin ç›®å½•åŠ å…¥ PATHã€‚
+    echo   [!] Ã»ÓĞ¼ì²âµ½ g++ ±àÒëÆ÷
+    echo       ³ÌĞò»áÏÈÓÃ±¾µØ±àÒëÆ÷ÑéÖ¤Éú³ÉµÄ´úÂë£¬È±ÉÙÊ±»á±àÒëÊ§°Ü¡£
+    echo       ½¨Òé°²×° MinGW-w64 »ò w64devkit£¬²¢°ÑËüµÄ bin Ä¿Â¼¼ÓÈë PATH¡£
     echo.
 ) else (
-    echo   [OK] å·²æ‰¾åˆ° C++ ç¼–è¯‘å™¨
+    echo   [OK] ÒÑÕÒµ½ C++ ±àÒëÆ÷
 )
 
-rem ---------------- 4. å¯åŠ¨æœåŠ¡ ----------------
+rem ---------------- 4. Æô¶¯·şÎñ ----------------
 if exist "port.txt" del /q "port.txt" >nul 2>nul
 echo.
-echo   æ­£åœ¨å¯åŠ¨æœåŠ¡...
+echo   ÕıÔÚÆô¶¯·şÎñ...
 start "" /b ".venv\Scripts\python.exe" server.py
 
 set /a TRIES=0
@@ -118,16 +118,16 @@ set "PORT="
 set /p PORT=<port.txt
 if not defined PORT set "PORT=8000"
 
-echo   [OK] æœåŠ¡å·²å¯åŠ¨
+echo   [OK] ·şÎñÒÑÆô¶¯
 echo.
 echo   --------------------------------------------------
-echo     åœ°å€ï¼šhttp://127.0.0.1:!PORT!
+echo     µØÖ·£ºhttp://127.0.0.1:!PORT!
 echo.
-echo     æµè§ˆå™¨é‡Œä¼šå¼¹å‡ºé…ç½®çª—å£ï¼Œå¡«è‡ªå·±çš„
-echo       å­¦å· / å¯†ç  / AI API Key
-echo     ä¿å­˜åå³å¯å¡«å†™è€ƒè¯•ç¼–å·å’Œé¢˜ç›®ç¼–å·å¼€å§‹åˆ·é¢˜ã€‚
+echo     ä¯ÀÀÆ÷Àï»áµ¯³öÅäÖÃ´°¿Ú£¬Ìî×Ô¼ºµÄ
+echo       Ñ§ºÅ / ÃÜÂë / AI API Key
+echo     ±£´æºó¼´¿ÉÌîĞ´¿¼ÊÔ±àºÅºÍÌâÄ¿±àºÅ¿ªÊ¼Ë¢Ìâ¡£
 echo.
-echo     æ³¨æ„ï¼šä¸è¦å…³é—­è¿™ä¸ªé»‘çª—å£ï¼Œå…³é—­å°±åœæ­¢è¿è¡Œã€‚
+echo     ×¢Òâ£º²»Òª¹Ø±ÕÕâ¸öºÚ´°¿Ú£¬¹Ø±Õ¾ÍÍ£Ö¹ÔËĞĞ¡£
 echo   --------------------------------------------------
 echo.
 start "" "http://127.0.0.1:!PORT!"
@@ -135,7 +135,7 @@ pause
 exit /b 0
 
 :NOPORT
-echo   [X] æœåŠ¡å¯åŠ¨å¤±è´¥ï¼Œè¯·çœ‹ä¸Šæ–¹æŠ¥é”™ä¿¡æ¯ã€‚
-echo       å¸¸è§åŸå› ï¼šä¾èµ–æ²¡è£…å¥½ï¼Œæˆ– 8000-8030 ç«¯å£å…¨è¢«å ç”¨ã€‚
+echo   [X] ·şÎñÆô¶¯Ê§°Ü£¬Çë¿´ÉÏ·½±¨´íĞÅÏ¢¡£
+echo       ³£¼ûÔ­Òò£ºÒÀÀµÃ»×°ºÃ£¬»ò 8000-8030 ¶Ë¿ÚÈ«±»Õ¼ÓÃ¡£
 pause
 exit /b 1

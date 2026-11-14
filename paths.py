@@ -4,6 +4,8 @@
 import os
 import sys
 
+import charset
+
 FROZEN = bool(getattr(sys, "frozen", False))
 
 if FROZEN:
@@ -30,22 +32,20 @@ for _d in (DATA_DIR, SHOTS_DIR, SRC_DIR):
 
 
 def ensure_env():
-    """首次运行从模板生成 .env"""
+    """首次运行从模板生成 .env（按默认编码 GBK 落盘）"""
     if os.path.exists(ENV_FILE):
         return ENV_FILE
     for cand in (os.path.join(BUNDLE_DIR, ".env.example"),
                  os.path.join(BUNDLE_DIR, "default.env")):
         if os.path.exists(cand):
             try:
-                with open(cand, "r", encoding="utf-8") as f:
-                    tpl = f.read()
-                with open(ENV_FILE, "w", encoding="utf-8") as f:
-                    f.write(tpl)
+                tpl = charset.read_text(cand, charset.detect(cand))
+                charset.write_text(ENV_FILE, tpl)
                 break
             except Exception:
                 pass
     else:
-        with open(ENV_FILE, "w", encoding="utf-8") as f:
-            f.write("AI_API_KEY=\nAI_BASE_URL=https://open.bigmodel.cn/api/paas/v4\n"
-                    "AI_MODEL=glm-4.5-flash\nXDOJ_USER=\nXDOJ_PASS=\n")
+        charset.write_text(ENV_FILE,
+                           "AI_API_KEY=\nAI_BASE_URL=https://open.bigmodel.cn/api/paas/v4\n"
+                           "AI_MODEL=glm-4.5-flash\nXDOJ_USER=\nXDOJ_PASS=\n")
     return ENV_FILE

@@ -9,6 +9,8 @@ import time
 
 import requests
 
+import charset
+
 
 def load_env(path=None):
     if path is None:
@@ -20,18 +22,20 @@ def load_env(path=None):
             path = os.path.join(here, "..", ".env")
     cfg = {}
     if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                cfg[k.strip()] = v.strip().strip('"').strip("'")
+        # 按文件实际编码读（默认 GBK，老版本写的 UTF-8 也能认）
+        for line in charset.read_text(path, charset.detect(path)).splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            cfg[k.strip()] = v.strip().strip('"').strip("'")
     for k in list(cfg) + ["AI_API_KEY", "AI_BASE_URL", "AI_MODEL",
                           "AI_MAX_TOKENS", "AI_FALLBACK_MODEL", "AI_VISION_MODEL",
-                          "XDOJ_USER", "XDOJ_PASS"]:
+                          "XDOJ_USER", "XDOJ_PASS", "XDOJ_ENCODING"]:
         if os.environ.get(k):
             cfg[k] = os.environ[k]
+    # 配置里若指定了编码，在这里统一切换，其它模块不必各自处理
+    charset.configure(cfg.get("XDOJ_ENCODING"))
     return cfg
 
 
@@ -43,7 +47,7 @@ def save_env(cfg):
     except Exception:
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
     order = ["XDOJ_USER", "XDOJ_PASS", "AI_API_KEY", "AI_BASE_URL", "AI_MODEL",
-             "AI_MAX_TOKENS", "AI_FALLBACK_MODEL", "AI_VISION_MODEL"]
+             "AI_MAX_TOKENS", "AI_FALLBACK_MODEL", "AI_VISION_MODEL", "XDOJ_ENCODING"]
     keys = [k for k in order if k in cfg] + [k for k in cfg if k not in order]
     lines = ["# XDOJ 自动刷题配置（本机保存，勿外传）"]
     for k in keys:
@@ -51,8 +55,8 @@ def save_env(cfg):
         if v is None:
             continue
         lines.append(f"{k}={v}")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+    # 整篇重写，统一落到默认编码（GBK），不再和旧文件混编
+    charset.write_text(path, "\n".join(lines) + "\n")
     return path
 
 

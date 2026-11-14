@@ -13,6 +13,7 @@ import subprocess
 import threading
 import time
 
+import charset
 from ai.solver import AuthError, load_env, solve_with_fallback
 from oj.client import VERDICT_OK, OJ, OJError
 from oj.pdftext import parse_samples, pdf_to_text, sample_mark_count
@@ -98,30 +99,64 @@ VISION = os.environ.get("XDOJ_NO_VISION", "") not in ("1", "true", "yes")
 
 # ---------------- 编译与样例 ----------------
 
-def compile_cpp(path):
+def _utf8_copy(path, encoding):
+    """按 GBK 落盘的源码，编译前复制一份 UTF-8 临时文件
+
+    MinGW 的 gcc 默认按 UTF-8 解析源文件，`-finput-charset=GBK` 在多数 Windows 构建里
+    没有编进 iconv，加了也不生效；GBK 中文字节会被当成非法 UTF-8，
+    报「missing terminating \" character」这种莫名其妙的错。
+    所以本地校验统一编译 UTF-8 副本，提交与落盘仍是 GBK 原文件。
+    """
+    if not encoding or charset.is_utf8(encoding):
+        return path, ""
+    try:
+        text = charset.read_text(path, encoding)
+        alt = os.path.join(os.path.dirname(path) or ".",
+                           ".u8_" + os.path.basename(path))
+        charset.write_text(alt, text, "utf-8")
+        return alt, alt
+    except Exception:
+        return path, ""
+
+
+def compile_cpp(path, encoding=None):
     """编译源文件：.c 用 gcc（C11），其余用 g++（C++17）
 
     题目要求用 C 语言，所以主力编译器是 gcc；没有 gcc 时退回 g++ 并用 -x c 强制按 C 编译。
     gcc 编译失败但 g++ 能过的情况不再自动放行 —— 评测机按 languageId=2 编译，
     能过本地 gcc 才说明语法真的没问题。
+
+    encoding 是源文件实际写入的编码（默认 GBK）。非 UTF-8 时先转出 UTF-8 副本再编译，
+    这样中文串不会把编译器带偏；产物输出的是 UTF-8 字节，run_sample 按 UTF-8 解码。
     """
+    src, tmp = _utf8_copy(path, encoding)
     exe = os.path.splitext(path)[0] + ".exe"
-    is_c = path.lower().endswith(".c")
+    is_c = src.lower().endswith(".c")
     if is_c:
         if GCC:
-            cmd = [GCC, "-std=c11", "-O2", "-Wall", "-o", exe, path, "-lm"]
+            cmd = [GCC, "-std=c11", "-O2", "-Wall", "-o", exe, src, "-lm"]
         elif GXX:
-            cmd = [GXX, "-x", "c", "-std=c11", "-O2", "-Wall", "-o", exe, path, "-lm"]
+            cmd = [GXX, "-x", "c", "-std=c11", "-O2", "-Wall", "-o", exe, src, "-lm"]
         else:
             return None, _no_compiler_msg()
     else:
         if not GXX:
             return None, _no_compiler_msg()
-        cmd = [GXX, "-std=c++17", "-O2", "-Wall", "-o", exe, path]
-    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", creationflags=_NO_WIN)
+        cmd = [GXX, "-std=c++17", "-O2", "-Wall", "-o", exe, src]
+
+    try:
+        r = subprocess.run(cmd, capture_output=True, creationflags=_NO_WIN,
+                           **charset.subprocess_kw())
+    except OSError as e:
+        return None, f"调用编译器失败：{e}"
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
     if r.returncode != 0:
-        return None, (r.stderr or r.stdout)[:1500]
+        return None, (r.stderr or r.stdout or "")[:1500]
     return exe, ""
 
 
@@ -142,13 +177,19 @@ def norm(s):
 
 
 def run_sample(exe, stdin_data, timeout=6):
+    """跑一组样例，返回 (stdout, 错误说明)
+
+    本地 exe 是用 UTF-8 副本编译的，中文串按 UTF-8 输出，所以这里按 UTF-8 解码；
+    程序若直接吐 GBK 字节，charset.decode 会自动退回 GBK，不会变成一堆替换符。
+    输入同样按 UTF-8 送进去，与本地可执行文件的字符串编码保持一致。
+    """
     try:
-        r = subprocess.run([exe], input=stdin_data, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=timeout,
+        r = subprocess.run([exe], input=(stdin_data or "").encode("utf-8", "replace"),
+                           capture_output=True, timeout=timeout,
                            creationflags=_NO_WIN)
         if r.returncode != 0:
             return None, f"运行时退出码 {r.returncode}"
-        return r.stdout, ""
+        return charset.decode(r.stdout, "utf-8"), ""
     except subprocess.TimeoutExpired:
         return None, "运行超时（可能死循环）"
 
@@ -313,12 +354,11 @@ class Engine:
     # 事件
     def log(self, msg, level="info"):
         self.emit({"type": "log", "msg": msg, "level": level})
-        # 同时落盘，页面关掉之后还能复盘
+        # 同时落盘，页面关掉之后还能复盘（按 GBK 写，记事本直接能看）
         try:
             with _LOG_LOCK:
-                with open(RUN_LOG, "a", encoding="utf-8") as f:
-                    f.write(time.strftime("[%m-%d %H:%M:%S] ")
-                            + f"[{level}] " + str(msg) + "\n")
+                charset.append_text(RUN_LOG, time.strftime("[%m-%d %H:%M:%S] ")
+                                    + f"[{level}] " + str(msg) + "\n")
         except Exception:
             pass
 
@@ -330,8 +370,7 @@ class Engine:
                "detail": (detail or "").splitlines()[0][:200] if detail else ""}
         try:
             with _LOG_LOCK:
-                with open(RUN_JSONL, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+                charset.append_text(RUN_JSONL, json.dumps(row, ensure_ascii=False) + "\n")
         except Exception:
             pass
 
@@ -390,8 +429,8 @@ class Engine:
             self.log(f"[{pid}] 用本地缓存的题面")
         text, imgs = pdf_to_text(pdf, always_image=VISION, image_dir=SHOTS,
                                  image_prefix=f"p{pid}_page", zoom=3.0)
-        with open(os.path.join(SHOTS, f"p{pid}.txt"), "w", encoding="utf-8") as f:
-            f.write(text or "(无文字层)")
+        # 题面文本也按 GBK 落盘，用记事本 / Excel 打开不会乱码
+        charset.write_text(os.path.join(SHOTS, f"p{pid}.txt"), text or "(无文字层)")
         if imgs:
             self.log(f"[{pid}] 题面已渲染 {len(imgs)} 页图片（公式以图为准）")
         return text, imgs
@@ -472,13 +511,16 @@ class Engine:
                     shutil.copy2(cpp, os.path.join(SRC, f"p{pid}.a{attempt - 1}.c"))
                 except Exception:
                     pass
-            with open(cpp, "w", encoding="utf-8") as f:
-                f.write(code)
+            # 源码默认按 GBK 落盘：与评测机代码页一致，中文串不会被按 GBK 解析成非法字节
+            enc = charset.write_text(cpp, code)
             self.problem(pid, title=title, status="编译中", attempt=attempt, code=code, verdict="")
             self.log(f"[{pid}] 出码 {raw_len} 字节 / {time.time()-t0:.1f}s"
-                     + (f"，去注释后 {len(code)} 字节" if len(code) != raw_len else ""))
+                     + (f"，去注释后 {len(code)} 字节" if len(code) != raw_len else "")
+                     + f"，按 {enc.upper()} 落盘")
+            if enc != charset.DEFAULT:
+                self.log(f"[{pid}] 代码含 GBK 无法表示的字符，本题按 {enc.upper()} 保存", "warn")
 
-            exe, err = compile_cpp(cpp)
+            exe, err = compile_cpp(cpp, enc)
             if not exe:
                 self.log(f"[{pid}] 编译失败", "err")
                 feedback = "上一版编译失败，请修正：\n" + err
@@ -622,7 +664,9 @@ class Engine:
                 continue
             todo.append(p)
 
-        self.log(f"待做 {len(todo)} 题：" + ", ".join(str(p["pid"]) for p in todo))
+        shown = ", ".join(str(p["pid"]) for p in todo[:20])
+        more = f" …（共 {len(todo)} 题）" if len(todo) > 20 else ""
+        self.log(f"待做 {len(todo)} 题：{shown}{more}")
         if not strict:
             self.log("已关闭「样例不符不提交」，样例过不了也会照旧提交", "warn")
         results = []
