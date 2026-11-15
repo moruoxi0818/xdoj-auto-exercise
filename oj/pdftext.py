@@ -240,6 +240,12 @@ def repair_fractions(text):
     return "\n".join(out) + tail
 
 
+# 样例块的保险丝：只用来防止把整篇说明吞进来，不代表「样例大概就这么长」。
+# 原先是写死 12 行 —— 表格型题面一个单元格一行，样例会被截在半截上。
+_MAX_SAMPLE_LINES = 300
+_MAX_SAMPLE_CHARS = 6000
+
+
 def parse_samples(text):
     """从题面里抽出 (输入, 输出) 样例对，抽不干净就返回空列表"""
     if not text:
@@ -261,6 +267,23 @@ def sample_mark_count(text):
     nums = {m.group(1) for m in _SUB_LINE_RE.finditer(t)}
     nums |= {m.group(1) for m in _IDX_RE.finditer(t)}
     return len(nums)
+
+
+def truncated_samples(samples):
+    """检查解析出的样例是否顶到了行数/字符上限
+
+    顶到上限说明 _clean_block 是「被截断」而不是「自然收尾」，此时样例自检的结论不可信
+    （p75 灰度直方图就是这样被判「输出不符」的，错在解析、不在代码）。
+    返回可读片段供调用方打警告，例如 ["样例1 输入 ≥300 行"]；没顶到上限就返回空列表。
+    """
+    notes = []
+    for i, (a, b) in enumerate(samples or [], 1):
+        for side, blk in (("输入", a or ""), ("输出", b or "")):
+            if blk.count("\n") + 1 >= _MAX_SAMPLE_LINES:
+                notes.append(f"样例{i} {side} ≥{_MAX_SAMPLE_LINES} 行")
+            elif len(blk) >= _MAX_SAMPLE_CHARS:
+                notes.append(f"样例{i} {side} ≥{_MAX_SAMPLE_CHARS} 字符")
+    return notes
 
 
 def _parse_indexed(t):
@@ -471,11 +494,6 @@ def _finish(raw_pairs):
             out.append((ca, cb))
     return out
 
-
-# 样例块的保险丝：只用来防止把整篇说明吞进来，不代表「样例大概就这么长」。
-# 原先是写死 12 行 —— 表格型题面一个单元格一行，样例会被截在半截上。
-_MAX_SAMPLE_LINES = 300
-_MAX_SAMPLE_CHARS = 6000
 
 # 成句中文的判定：样例里出现中文是正常的（人名、字符串），但都很短；
 # 又长又带标点的整行中文，基本就是说明文字而不是数据。

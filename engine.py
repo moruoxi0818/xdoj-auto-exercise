@@ -16,7 +16,7 @@ import time
 import charset
 from ai.solver import AuthError, load_env, solve_with_fallback
 from oj.client import VERDICT_OK, OJ, OJError
-from oj.pdftext import parse_samples, pdf_to_text, sample_mark_count
+from oj.pdftext import parse_samples, pdf_to_text, sample_mark_count, truncated_samples
 
 _NO_WIN = 0x08000000 if os.name == "nt" else 0   # CREATE_NO_WINDOW
 
@@ -174,6 +174,15 @@ def norm(s):
     while lines and not lines[0].strip():
         lines.pop(0)
     return "\n".join(lines)
+
+
+def _brief(s, lines=5, width=160):
+    """样例只打印前几行：表格排版一个格子一行，几十行会把日志刷屏"""
+    parts = (s or "").splitlines()
+    head = " / ".join(parts[:lines])
+    if len(parts) > lines:
+        head += f" …（共 {len(parts)} 行）"
+    return head if len(head) <= width else head[:width] + "…"
 
 
 def run_sample(exe, stdin_data, timeout=6):
@@ -463,8 +472,12 @@ class Engine:
             # 此时样例会被拼成一组喂给程序，自检结果必然是假的（p616 就是这么挂的）
             self.log(f"[{pid}] 注意：题面标注 {marks} 组样例，只解析出 {len(samples)} 组，"
                      f"疑似被合并，自检结论仅供参考", "warn")
+        for note in truncated_samples(samples):
+            # 顶到解析上限 = 样例可能是被截断的，此时「样例不符」不能怪代码（p75 灰度直方图）
+            self.log(f"[{pid}] 注意：{note}，已到解析上限，样例可能被截断，自检结论仅供参考",
+                     "warn")
         for i, (a, b) in enumerate(samples, 1):
-            self.log(f"[{pid}]   样例{i}：{a} -> {b}".replace("\n", " / "))
+            self.log(f"[{pid}]   样例{i}：{_brief(a)} -> {_brief(b)}")
 
         extra = (f"这是 XDOJ 第 {pid} 题「{title}」。"
                  f"时间限制 {prob.get('tl')} 秒，内存限制 {prob.get('ml')} KB。"
