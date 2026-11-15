@@ -161,8 +161,11 @@ _SUB_LINE_RE = re.compile(r"^[ \t]*(?:样例|示例)[ \t]*(\d{1,2})[ \t]*[:：]?
 _INLINE_RE = re.compile(r"(输入|输出)[ \t]*[:：][ \t]*")
 
 # 样例块后面常跟着这些说明文字，不能算进样例内容
+# 主函数 / 测试点 / 特殊性质 / 子任务：有些题在样例后接「主函数输出样例」或子任务表，
+# 这些标题不匹配 _SEC_RE（不从「输入/输出样例」开头），只能在这里单独拦。
 _STOP_HEAD = re.compile(
     r"^(备注|说明|提示|注意|数据范围|评分|本题|其中|约束|限制|要求|知识点|来源|"
+    r"主函数|测试点|特殊性质|子任务|"
     r"输入说明|输出说明|输入格式|输出格式|输入描述|输出描述|样例解释|样例说明)")
 _STOP_ANY = re.compile(
     r"(用例规模|规模与约定|数据范围|评测用例|样例说明|样例解释|样例\s*\d*\s*说明)")
@@ -469,19 +472,55 @@ def _finish(raw_pairs):
     return out
 
 
+# 样例块的保险丝：只用来防止把整篇说明吞进来，不代表「样例大概就这么长」。
+# 原先是写死 12 行 —— 表格型题面一个单元格一行，样例会被截在半截上。
+_MAX_SAMPLE_LINES = 300
+_MAX_SAMPLE_CHARS = 6000
+
+# 成句中文的判定：样例里出现中文是正常的（人名、字符串），但都很短；
+# 又长又带标点的整行中文，基本就是说明文字而不是数据。
+_PROSE_PUNCT = re.compile(r"[，。；：、“”‘’（）？！]")
+
+
+def _looks_like_prose(s):
+    cjk = sum(1 for ch in s if "\u4e00" <= ch <= "\u9fff")
+    if cjk >= 10:
+        return True
+    return cjk >= 4 and len(s) >= 12 and bool(_PROSE_PUNCT.search(s))
+
+
+def _is_data_line(s):
+    """空行之后还能不能算样例数据：只认不含中文的行
+
+    表格排版会在样例中间吐空行，空行后面可能是数据的续行，也可能是说明/测试点表格。
+    用「有没有中文」区分最省事：数据行不含中文（数字、字母、符号），说明行几乎都含。
+    样例本身带中文时（人名、字符串）不会在中间夹空行，所以这条不会误伤。
+    """
+    return not any("\u4e00" <= ch <= "\u9fff" for ch in s)
+
+
 def _clean_block(s):
-    """切出一段样例内容：跳过开头空行取第一个非空段落，遇到说明文字就停"""
+    """切出一段样例内容：收样例数据行，遇到说明文字就停
+
+    三处刻意的设计（都是踩过的坑）：
+    * 空行不再等于「样例结束」。多栏/跨页排版会在样例中间吐出空行，例如 p75 灰度直方图
+      的输出样例，`12 1` 与 `14 1` 之间就夹了一个空行，按段落取会把期望输出砍掉一半。
+      现在的规则是：空行之后接的是不含中文的数据行就继续收，接中文说明就停。
+    * 行数上限从 12 放宽到 300 行、字符上限 6000。表格型题面里 PDF 会把每个单元格
+      抽成独立一行（同一题输入 `5 4` 之后 20 个数字各占一行），12 行的上限正好把小样例
+      截在中间：程序只读到一半数据，样例自检必然报「输出不符」。
+    * 仍然在「说明 / 提示 / 数据范围 / 下一个样例标题 / 子任务表」处停；另外加一条
+      成句中文的判定，防止把样例后面的解释段落吞进样例。
+    """
     if not s:
         return ""
-    # 「输入样例」和内容之间经常空一行，所以要跳过空行取第一段非空内容；
-    # 样例之后往往再空一行接「用例规模与约定」之类的说明，这部分不能算进样例。
-    blocks = [b for b in re.split(r"\n[ \t]*\n", s.strip()) if b.strip()]
-    if not blocks:
-        return ""
     lines = []
-    for ln in blocks[0].splitlines():
+    chars = 0
+    gap = False
+    for ln in s.splitlines():
         ln = ln.strip()
         if not ln:
+            gap = True         # 记下这里出现过空行，下一行要判断是继续数据还是开始说明
             continue
         if _ORDINAL.match(ln):
             continue          # 单独一行的序号（1：）不是样例内容
@@ -489,8 +528,14 @@ def _clean_block(s):
                 or _SAMPLE_HEAD.match(ln) or _SAMPLE_HEAD_BARE.match(ln)
                 or _BARE_HEAD.match(ln)):
             break
+        if lines and gap and not _is_data_line(ln):
+            break             # 空行之后接中文说明，样例到头了
+        if lines and _looks_like_prose(ln):
+            break             # 没有空行也照判：成句中文不是数据
         lines.append(ln)
-        if len(lines) >= 12:
+        chars += len(ln)
+        gap = False
+        if len(lines) >= _MAX_SAMPLE_LINES or chars >= _MAX_SAMPLE_CHARS:
             break
     return "\n".join(lines).strip()
 
